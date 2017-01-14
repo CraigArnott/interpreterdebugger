@@ -14,21 +14,30 @@ import Control.Monad.State
 import Control.Monad.Writer
 
 {-------------------------------------------------------------------}
+{- Our mainline                                                    -}
+{-------------------------------------------------------------------}
+ 
+main = runInterpreter
+
+runInterpreter :: IO ()
+runInterpreter = do
+    contents <- readFile "myFile.txt"
+    let program = (read contents :: Statement)
+    --executeProgram program
+    putStr $ show program
+ 
+{-------------------------------------------------------------------}
 {- The pure expression language                                    -}
 {-------------------------------------------------------------------}
-
-main = do
-    contents <- readFile "myFile.txt"
-    putStr $ show $ (read contents :: Statement)
-
+   
 data Val = I Int | B Bool
     deriving (Eq, Show, Read)
 
 data Expr = Const Val
-    | Add Expr Expr | Sub Expr Expr  | Mul Expr Expr | Div Expr Expr
-    | And Expr Expr | Or Expr Expr | Not Expr 
-    | Eq Expr Expr | Gt Expr Expr | Lt Expr Expr
-    | Var String
+         | Add Expr Expr | Sub Expr Expr  | Mul Expr Expr | Div Expr Expr
+         | And Expr Expr | Or Expr Expr | Not Expr 
+         | Eq Expr Expr | Gt Expr Expr | Lt Expr Expr
+         | Var String
     deriving (Eq, Show, Read)
 
 type Name = String 
@@ -93,10 +102,9 @@ eval (Var s) = do
     env <- ask
     lookup s env
 
-
 {-------------------------------------------------------------------}
 {- The statement language                                          -}
-
+{-------------------------------------------------------------------}
 
 data Statement = Assign String Expr
                 | If Expr Statement Statement
@@ -106,3 +114,40 @@ data Statement = Assign String Expr
                 | Try Statement Statement
                 | Pass                    
     deriving (Eq, Show, Read)
+
+{- STOLEN CODE FROM NOTES -}
+
+type Run a = StateT Env (ExceptT String IO) a 
+runRun p =  runExceptT ( runStateT p Map.empty) 
+
+set :: (Name, Val) -> Run ()
+set (s,i) = state $ (\table -> ((), Map.insert s i table))
+
+exec :: Statement -> Run ()
+
+exec (Assign s v) = do
+    st <- get  
+    Right val <- return $ runEval st (eval v)  
+    set (s,val)
+
+exec (Seq s0 s1) = do exec s0 >> exec s1
+
+exec (Print e) = do 
+    st <- get
+    Right val <- return $ runEval st (eval e) 
+    liftIO $ System.print val
+    return () 
+
+exec (If cond s0 s1) = do
+    st <- get
+    Right (B val) <- return $ runEval st (eval cond)
+    if val then do exec s0 else do exec s1
+
+exec (While cond s) = do
+    st <- get
+    Right (B val) <- return $ runEval st (eval cond)
+    if val then do exec s >> exec (While cond s) else return ()
+
+exec (Try s0 s1) = do catchError (exec s0) (\e -> exec s1)
+
+exec Pass = return ()
