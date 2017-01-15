@@ -293,8 +293,6 @@ optionsString = "Options:\nn: execute next command\np: go back to previous state
 {- Pre-run analysis functions                                      -}
 {-------------------------------------------------------------------}
 
-
-
 -- check to see if a program has any variables that are written to but never used
 runCheck :: Statement -> IO ()
 runCheck s = do
