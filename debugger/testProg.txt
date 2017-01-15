@@ -1,0 +1,22 @@
+Seq 
+(
+    Assign "count" (Const (I 1))
+)
+(
+    Seq
+    (   
+        Seq
+        (
+            While ((Lt (Var "count")(Const (I 5))))
+            (
+                Assign "count" (Add (Var "count") (Const (I 1)))
+            )
+        )
+        (
+            Print (Var "count")
+        )
+    )
+    (
+        Assign "myUnusedVar" (Const (I 20))
+    )
+)
