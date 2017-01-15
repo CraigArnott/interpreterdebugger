@@ -45,6 +45,8 @@ data Expr = Const Val
 
 type Name = String 
 type Env = [Map.Map Name Val]
+type Trace = [Statement] -- type representing the statements executed to get to the current point
+type Stage = (Trace, Env) -- type representing a step in the interpretation process
 
 lookup k t = case Map.lookup k t of
     Just x -> return x
@@ -54,7 +56,7 @@ lookup k t = case Map.lookup k t of
  -- with error handling and Reader monad instance to carry dictionary
  --}
 
-type Eval a = ReaderT Env (ExceptT String Identity) a 
+type Eval a = ReaderT Stage (ExceptT String Identity) a 
 
 runEval env ex = runIdentity ( runExceptT ( runReaderT ex env) )
 
@@ -103,7 +105,7 @@ eval (Lt e0 e1) = do evalib (<) e0 e1
                         
 eval (Var s) = do 
     env <- ask
-    lookup s $ head env
+    lookup s $ head $ snd env
 
 {-------------------------------------------------------------------}
 {- The statement language                                          -}
@@ -120,31 +122,37 @@ data Statement = Assign String Expr
 
 run :: Statement -> IO ()
 run s = do
-    result <- runExceptT $ (runStateT $ exec s) [Map.empty]
+    result <- runExceptT $ (runStateT $ exec s) ([s], [Map.empty])
     case result of
         Right _ -> return ()
         Left e -> System.print ("Uncaught exception: " ++ e)
 
-type Run a = StateT Env (ExceptT String IO) a 
+type Run a = StateT Stage (ExceptT String IO) a 
 runRun p =  runExceptT (runStateT p Map.empty) 
 
+setStat :: Statement -> Run ()
+setStat stat = state $ (\(stats, tables) -> ((), (stat:stats, tables))) 
+
+-- this should probably be cleaned up, it has grown fairly unwieldy
 set :: (Name, Val) -> Run ()
-set (s,i) = state $ (\table -> ((), (Map.insert s i $ head table) : table))
+set (s,i) = state $ (\(stats,tables) -> ((), (stats, (Map.insert s i $ head tables) : tables)))
 
 exec :: Statement -> Run ()
 
 exec (Assign s v) = do
     st <- get  
+    let env = snd st
     Right val <- return $ runEval st (eval v)  
     set (s,val)
+    setStat (Assign s v)
 
-exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1
+exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1 -- no need to prompt user on Seq statements
 
 exec (Print e) = do 
     st <- get
     Right val <- return $ runEval st (eval e) 
     liftIO $ System.print val
-    return () 
+    setStat (Print e) 
 
 exec (If cond s0 s1) = do
     st <- get
@@ -161,7 +169,12 @@ exec (Try s0 s1) = do catchError (presentMenu s0) (\e -> presentMenu s1)
 exec Pass = return ()
 
 {-------------------------------------------------------------------}
-{- Variable inspection operations                                  -}
+{- Pre-run analysis functions                                      -}
+{-------------------------------------------------------------------}
+
+
+{-------------------------------------------------------------------}
+{- State inspection operations                                  -}
 {-------------------------------------------------------------------}
 
 peekVar :: String -> Env -> String
@@ -173,6 +186,10 @@ peekVar var env = case result of
 history :: String -> Env -> String
 history _ [] = "Beginning of history...\n"
 history var (env:rest) = (history var rest) ++ (peekVar var (env:rest))
+
+pastOps :: Trace -> String
+pastOps [] = []
+pastOps (t:ts) = (pastOps ts) ++ "\n" ++ (show t)
 
 {-------------------------------------------------------------------}
 {- Logic for the options menu                                      -}
@@ -192,11 +209,18 @@ performCommand O s = do
     presentMenu s
 performCommand (Inspect var) s = do
     st <- get
-    liftIO $ putStrLn $ peekVar var st--putStr $ show $ lookup var st
+    let env = snd st
+    let trace = fst st
+    liftIO $ putStrLn "--------------------------------------------"
+    liftIO $ putStrLn $ pastOps trace
+    liftIO $ putStrLn "--------------------------------------------"
+    liftIO $ putStrLn $ show st
+    liftIO $ putStrLn $ peekVar var env
     presentMenu s
 performCommand (History var) s = do
     st <- get
-    liftIO $ putStrLn $ (history var st) ++ "End of history!"
+    let env = snd st
+    liftIO $ putStrLn $ (history var env) ++ "End of history!"
     presentMenu s
 
 -- Capitalise the first character in the input string
@@ -217,4 +241,3 @@ presentMenu s = do
             presentMenu s
 
 optionsString = "Options:\nn: execute next command\ninspect \"<varname>\": inspect a variable's current state\nhistory \"<varname>\": inspect the history of a variable"
-

@@ -1,9 +1,13 @@
-Seq (
+Seq 
+(
     Assign "kek" (Const (I 2))
-) (
-    Print (
-        Const (
-            B True
-        )
+)
+(
+    Seq
+    (   
+        Assign "hello" (Const (B True))
+    )
+    (
+        Assign "lul" (Const (I 20))
     )
 )
