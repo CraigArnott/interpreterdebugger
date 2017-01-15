@@ -44,7 +44,7 @@ data Expr = Const Val
     deriving (Eq, Show, Read)
 
 type Name = String 
-type Env = Map.Map Name Val
+type Env = [Map.Map Name Val]
 
 lookup k t = case Map.lookup k t of
     Just x -> return x
@@ -103,7 +103,7 @@ eval (Lt e0 e1) = do evalib (<) e0 e1
                         
 eval (Var s) = do 
     env <- ask
-    lookup s env
+    lookup s $ head env
 
 {-------------------------------------------------------------------}
 {- The statement language                                          -}
@@ -120,7 +120,7 @@ data Statement = Assign String Expr
 
 run :: Statement -> IO ()
 run s = do
-    result <- runExceptT $ (runStateT $ exec s) Map.empty
+    result <- runExceptT $ (runStateT $ exec s) [Map.empty]
     case result of
         Right _ -> return ()
         Left e -> System.print ("Uncaught exception: " ++ e)
@@ -129,7 +129,7 @@ type Run a = StateT Env (ExceptT String IO) a
 runRun p =  runExceptT (runStateT p Map.empty) 
 
 set :: (Name, Val) -> Run ()
-set (s,i) = state $ (\table -> ((), Map.insert s i table))
+set (s,i) = state $ (\table -> ((), (Map.insert s i $ head table) : table))
 
 exec :: Statement -> Run ()
 
@@ -161,36 +161,53 @@ exec (Try s0 s1) = do catchError (presentMenu s0) (\e -> presentMenu s1)
 exec Pass = return ()
 
 {-------------------------------------------------------------------}
-{- Logic for the options menu                                      -}
+{- Variable inspection operations                                  -}
 {-------------------------------------------------------------------}
-
-data Command = N
-             | Inspect String
-    deriving (Show, Read, Eq)
 
 peekVar :: String -> Env -> String
 peekVar var env = case result of
-                    Just x -> show x
-                    Nothing -> "Variable does not exist!"
-               where result = lookup var env
+                    Just x -> show x ++ "\n"
+                    Nothing -> "Variable does not exist (yet)!\n"
+               where result = lookup var $ head env
 
+history :: String -> Env -> String
+history _ [] = "Beginning of history...\n"
+history var (env:rest) = (history var rest) ++ (peekVar var (env:rest))
+
+{-------------------------------------------------------------------}
+{- Logic for the options menu                                      -}
+{-------------------------------------------------------------------}
+
+data Command = N -- execute next instruction
+             | O -- options
+             | Inspect String
+             | History String
+    deriving (Show, Read, Eq)
+
+-- this could probably be a lot nicer
 performCommand :: Command -> Statement -> Run ()
 performCommand N s = exec s
+performCommand O s = do
+    liftIO $ putStrLn optionsString
+    presentMenu s
 performCommand (Inspect var) s = do
     st <- get
-    --putStr $ "Variable " ++ var ++ ": " 
     liftIO $ putStrLn $ peekVar var st--putStr $ show $ lookup var st
     presentMenu s
+performCommand (History var) s = do
+    st <- get
+    liftIO $ putStrLn $ (history var st) ++ "End of history!"
+    presentMenu s
 
--- capitalise the first character in the input string because
--- it is annoying to have to use uppercase in command names
+-- Capitalise the first character in the input string
+-- Using uppercase on the command line is annoying!
 capitalise :: String -> String
 capitalise (x:xs) = (toUpper x):xs
 capitalise [] = []
 
 presentMenu :: Statement -> Run ()
 presentMenu s = do
-    liftIO $ putStrLn "Input command: "
+    liftIO $ putStrLn "Input command (o for options): "
     input <- liftIO $ getLine
     let result = (readMaybe (capitalise input) :: Maybe Command)
     case result of
@@ -198,3 +215,6 @@ presentMenu s = do
         Nothing -> do 
             liftIO $ putStrLn "Invalid command!"
             presentMenu s
+
+optionsString = "Options:\nn: execute next command\ninspect \"<varname>\": inspect a variable's current state\nhistory \"<varname>\": inspect the history of a variable"
+
