@@ -116,6 +116,14 @@ eval (Var s) = do
 {- The statement language                                          -}
 {-------------------------------------------------------------------}
 
+-- This section details how statements are handled in our interpreter.
+-- Program execution is largely modelled through the State transformer,
+-- which allows us to keep track of the current state of the variables
+-- in addition to all the previous states (for backtracking and inspection
+-- purposes). This is done by maintaining two lists in the state: one for 
+-- the variable mappings at each stage and one for the statements that have
+-- been executed.
+
 data Statement = Assign String Expr
                 | If Expr Statement Statement
                 | While Expr Statement
