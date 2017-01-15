@@ -9,6 +9,7 @@ import qualified System.IO as System
 
 import Text.Read (readMaybe) 
 import Data.Char (toUpper)
+import Data.List (nub, (\\))
 
 import Control.Monad.Identity
 import Control.Monad.Except
@@ -20,12 +21,16 @@ import Control.Monad.Writer
 {- Our mainline                                                    -}
 {-------------------------------------------------------------------}
  
-main = runInterpreter
+main = do
+    putStrLn "Input file name:"
+    file <- getLine
+    runInterpreter file
 
-runInterpreter :: IO ()
-runInterpreter = do
-    contents <- readFile "myFile.txt"
+runInterpreter :: String -> IO ()
+runInterpreter file = do
+    contents <- readFile file
     let program = (read contents :: Statement)
+    runCheck program
     run program
     putStr $ "\n"
  
@@ -130,15 +135,25 @@ run s = do
 type Run a = StateT Stage (ExceptT String IO) a 
 runRun p =  runExceptT (runStateT p Map.empty) 
 
+-- reset to the previous state
 goBack :: Run ()
 goBack = state $ (\(x:xs, y:ys) -> ((), (xs,ys)))
 
+-- set the previous statement as the given statement
 setStat :: Statement -> Run ()
 setStat stat = state $ (\(stats, tables) -> ((), (stat:stats, tables))) 
 
--- this should probably be cleaned up, it has grown fairly unwieldy
+-- set the given variable to the given value and create a new mapping table containing the new mapping
 set :: (Name, Val) -> Run ()
 set (s,i) = state $ (\(stats,tables) -> ((), (stats, (Map.insert s i $ head tables) : tables)))
+
+dupHead :: [a] -> [a]
+dupHead [] = []
+dupHead (x:xs) = x:x:xs
+
+-- simply duplicate the environment when making no changes to variables
+setNone :: Run ()
+setNone = state $ (\(stats, tables) -> ((), (stats, dupHead tables)))
 
 exec :: Statement -> Run ()
 
@@ -149,19 +164,26 @@ exec (Assign s v) = do
     set (s,val)
     setStat (Assign s v)
 
+-- don't record any state info for Seq statements, this makes the debugging process cleaner
 exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1 
 
 exec (Print e) = do 
     st <- get
     Right val <- return $ runEval st (eval e) 
     liftIO $ System.print val
-    setStat (Print e) 
+    setStat (Print e)
+    setNone
 
 exec (If cond s0 s1) = do
     st <- get
     Right (B val) <- return $ runEval st (eval cond)
+    setStat (If cond s0 s1)
+    setNone
     if val then do presentMenu s0 else do presentMenu s1
 
+-- we "unroll" loops by not saving state information
+-- this is because the comparison will always yield the same result
+-- makes debugging cleaner
 exec (While cond s) = do
     st <- get
     Right (B val) <- return $ runEval st (eval cond)
@@ -172,12 +194,7 @@ exec (Try s0 s1) = do catchError (presentMenu s0) (\e -> presentMenu s1)
 exec Pass = return ()
 
 {-------------------------------------------------------------------}
-{- Pre-run analysis functions                                      -}
-{-------------------------------------------------------------------}
-
-
-{-------------------------------------------------------------------}
-{- State inspection operations                                  -}
+{- State inspection operations                                     -}
 {-------------------------------------------------------------------}
 
 peekVar :: String -> Env -> String
@@ -210,7 +227,7 @@ data Command = N -- execute next instruction
              | History String -- view the history of the given variable from the beginning of execution
     deriving (Show, Read, Eq)
 
--- this could probably be a lot nicer
+-- handle all the commands outlined above
 performCommand :: Command -> Statement -> Run ()
 
 performCommand N s = exec s
@@ -254,8 +271,10 @@ capitalise [] = []
 
 presentMenu :: Statement -> Run () 
 
-presentMenu (Seq a b) = exec $ Seq a b -- no need to present choice for Seq actions,  it just annoys the user
+-- no need to present choice for Seq actions, it just annoys the user
+presentMenu (Seq a b) = exec $ Seq a b 
 
+-- for all other actions, give the user a prompt asking them what to do
 presentMenu s = do
     liftIO $ putStrLn $ "Current statement: " ++ show s
     liftIO $ putStrLn "Input command (o for options): "
@@ -267,4 +286,57 @@ presentMenu s = do
             liftIO $ putStrLn "Invalid command!"
             presentMenu s
 
-optionsString = "Options:\nn: execute next command\ninspect \"<varname>\": inspect a variable's current state\nhistory \"<varname>\": inspect the history of a variable"
+-- Our options prompt
+optionsString = "Options:\nn: execute next command\np: go back to previous state\npast: view a list of previously executed statements\nvars: view the list of variables that currently have values\ninspect \"<varname>\": inspect a variable's current state\nhistory \"<varname>\": inspect the history of a variable"
+
+{-------------------------------------------------------------------}
+{- Pre-run analysis functions                                      -}
+{-------------------------------------------------------------------}
+
+
+
+-- check to see if a program has any variables that are written to but never used
+runCheck :: Statement -> IO ()
+runCheck s = do
+    let unused = checkUnused s
+    case unused of
+        [] -> putStrLn "Check completed, no unused variables found!"
+        x -> putStrLn $ "Unused variables detected: " ++ (show x)
+
+checkUnused :: Statement -> [String]
+checkUnused s = writtenTo \\ readFrom
+        where readFrom = nub $ getReadFrom s
+              writtenTo = nub $ getWrittenTo s
+
+-- get a list of all the variables that are read from in a program
+getReadFrom :: Statement -> [String]
+getReadFrom (Assign _ e) = getReadFromExpr e
+getReadFrom (Print e) = getReadFromExpr e
+getReadFrom (If cond l r) = getReadFromExpr cond ++ getReadFrom l ++ getReadFrom r 
+getReadFrom (While cond s) = getReadFromExpr cond ++ getReadFrom s
+getReadFrom (Seq l r) = getReadFrom l ++ getReadFrom r
+getReadFrom (Try l r) = getReadFrom l ++ getReadFrom r
+
+-- same as above but for expressions
+getReadFromExpr :: Expr -> [String]
+getReadFromExpr (Const _) = []
+getReadFromExpr (Var x) = [x]
+getReadFromExpr (Not x) = getReadFromExpr x
+getReadFromExpr (Mul l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Div l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Add l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Sub l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (And l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Or l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Eq l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Gt l r) = getReadFromExpr l ++ getReadFromExpr r
+getReadFromExpr (Lt l r) = getReadFromExpr l ++ getReadFromExpr r
+
+-- get a list of all the variables that are written to in a program
+getWrittenTo :: Statement -> [String]
+getWrittenTo (Print _) = []
+getWrittenTo (Assign x _) = [x]
+getWrittenTo (While _ x) = getWrittenTo x
+getWrittenTo (Seq l r) = getWrittenTo l ++ getWrittenTo r
+getWrittenTo (If _ l r) = getWrittenTo l ++ getWrittenTo r
+getWrittenTo (Try l r) = getWrittenTo l ++ getWrittenTo r
