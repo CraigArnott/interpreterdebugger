@@ -197,9 +197,15 @@ exec (While cond s) = do
     Right (B val) <- return $ runEval st (eval cond)
     if val then do presentMenu s >> presentMenu (While cond s) else return ()
 
-exec (Try s0 s1) = do catchError (presentMenu s0) (\e -> presentMenu s1)
+exec (Try s0 s1) = do 
+    setStat (Try s0 s1)
+    setNone
+    catchError (presentMenu s0) (\e -> presentMenu s1)
 
-exec Pass = return ()
+exec Pass = do
+    setStat (Pass)
+    setNone
+    return ()
 
 {-------------------------------------------------------------------}
 {- State inspection operations                                     -}
