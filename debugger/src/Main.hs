@@ -7,6 +7,9 @@ import Data.Maybe
 
 import qualified System.IO as System
 
+import Text.Read (readMaybe) 
+import Data.Char (toUpper)
+
 import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -23,8 +26,8 @@ runInterpreter :: IO ()
 runInterpreter = do
     contents <- readFile "myFile.txt"
     let program = (read contents :: Statement)
-    --executeProgram program
-    putStr $ show program
+    run program
+    putStr $ "\n"
  
 {-------------------------------------------------------------------}
 {- The pure expression language                                    -}
@@ -115,10 +118,15 @@ data Statement = Assign String Expr
                 | Pass                    
     deriving (Eq, Show, Read)
 
-{- STOLEN CODE FROM NOTES -}
+run :: Statement -> IO ()
+run s = do
+    result <- runExceptT $ (runStateT $ exec s) Map.empty
+    case result of
+        Right _ -> return ()
+        Left e -> System.print ("Uncaught exception: " ++ e)
 
 type Run a = StateT Env (ExceptT String IO) a 
-runRun p =  runExceptT ( runStateT p Map.empty) 
+runRun p =  runExceptT (runStateT p Map.empty) 
 
 set :: (Name, Val) -> Run ()
 set (s,i) = state $ (\table -> ((), Map.insert s i table))
@@ -130,7 +138,7 @@ exec (Assign s v) = do
     Right val <- return $ runEval st (eval v)  
     set (s,val)
 
-exec (Seq s0 s1) = do exec s0 >> exec s1
+exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1
 
 exec (Print e) = do 
     st <- get
@@ -141,13 +149,52 @@ exec (Print e) = do
 exec (If cond s0 s1) = do
     st <- get
     Right (B val) <- return $ runEval st (eval cond)
-    if val then do exec s0 else do exec s1
+    if val then do presentMenu s0 else do presentMenu s1
 
 exec (While cond s) = do
     st <- get
     Right (B val) <- return $ runEval st (eval cond)
-    if val then do exec s >> exec (While cond s) else return ()
+    if val then do presentMenu s >> presentMenu (While cond s) else return ()
 
-exec (Try s0 s1) = do catchError (exec s0) (\e -> exec s1)
+exec (Try s0 s1) = do catchError (presentMenu s0) (\e -> presentMenu s1)
 
 exec Pass = return ()
+
+{-------------------------------------------------------------------}
+{- Logic for the options menu                                      -}
+{-------------------------------------------------------------------}
+
+data Command = N
+             | Inspect String
+    deriving (Show, Read, Eq)
+
+peekVar :: String -> Env -> String
+peekVar var env = case result of
+                    Just x -> show x
+                    Nothing -> "Variable does not exist!"
+               where result = lookup var env
+
+performCommand :: Command -> Statement -> Run ()
+performCommand N s = exec s
+performCommand (Inspect var) s = do
+    st <- get
+    --putStr $ "Variable " ++ var ++ ": " 
+    liftIO $ putStrLn $ peekVar var st--putStr $ show $ lookup var st
+    presentMenu s
+
+-- capitalise the first character in the input string because
+-- it is annoying to have to use uppercase in command names
+capitalise :: String -> String
+capitalise (x:xs) = (toUpper x):xs
+capitalise [] = []
+
+presentMenu :: Statement -> Run ()
+presentMenu s = do
+    liftIO $ putStrLn "Input command: "
+    input <- liftIO $ getLine
+    let result = (readMaybe (capitalise input) :: Maybe Command)
+    case result of
+        Just cmd -> performCommand cmd s
+        Nothing -> do 
+            liftIO $ putStrLn "Invalid command!"
+            presentMenu s

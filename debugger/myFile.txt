@@ -1,1 +1,9 @@
-Seq Pass Pass
+Seq (
+    Assign "kek" (Const (I 2))
+) (
+    Print (
+        Const (
+            B True
+        )
+    )
+)
