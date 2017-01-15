@@ -122,13 +122,16 @@ data Statement = Assign String Expr
 
 run :: Statement -> IO ()
 run s = do
-    result <- runExceptT $ (runStateT $ exec s) ([s], [Map.empty])
+    result <- runExceptT $ (runStateT $ exec s) ([], [Map.empty])
     case result of
         Right _ -> return ()
         Left e -> System.print ("Uncaught exception: " ++ e)
 
 type Run a = StateT Stage (ExceptT String IO) a 
 runRun p =  runExceptT (runStateT p Map.empty) 
+
+goBack :: Run ()
+goBack = state $ (\(x:xs, y:ys) -> ((), (xs,ys)))
 
 setStat :: Statement -> Run ()
 setStat stat = state $ (\(stats, tables) -> ((), (stat:stats, tables))) 
@@ -183,6 +186,9 @@ peekVar var env = case result of
                     Nothing -> "Variable does not exist (yet)!\n"
                where result = lookup var $ head env
 
+listVars :: Env -> String
+listVars env = show $ Map.keys $ head env
+
 history :: String -> Env -> String
 history _ [] = "Beginning of history...\n"
 history var (env:rest) = (history var rest) ++ (peekVar var (env:rest))
@@ -196,27 +202,44 @@ pastOps (t:ts) = (pastOps ts) ++ "\n" ++ (show t)
 {-------------------------------------------------------------------}
 
 data Command = N -- execute next instruction
+             | P -- go back to previous state 
              | O -- options
+             | Vars -- display all variables that currently hold values
+             | Past -- display all previously executed statements
              | Inspect String
              | History String
     deriving (Show, Read, Eq)
 
 -- this could probably be a lot nicer
 performCommand :: Command -> Statement -> Run ()
+
 performCommand N s = exec s
+
+performCommand P s = do
+    st <- get
+    goBack
+    presentMenu $ head $ fst st
+    presentMenu s
+
 performCommand O s = do
     liftIO $ putStrLn optionsString
     presentMenu s
+
+performCommand Vars s = do
+    st <- get
+    liftIO $ putStrLn $ listVars $ snd st
+    presentMenu s
+
+performCommand Past s = do
+    st <- get
+    liftIO $ putStrLn $ pastOps $ fst st
+    presentMenu s
+
 performCommand (Inspect var) s = do
     st <- get
-    let env = snd st
-    let trace = fst st
-    liftIO $ putStrLn "--------------------------------------------"
-    liftIO $ putStrLn $ pastOps trace
-    liftIO $ putStrLn "--------------------------------------------"
-    liftIO $ putStrLn $ show st
-    liftIO $ putStrLn $ peekVar var env
+    liftIO $ putStrLn $ peekVar var $ snd st
     presentMenu s
+
 performCommand (History var) s = do
     st <- get
     let env = snd st
@@ -231,6 +254,7 @@ capitalise [] = []
 
 presentMenu :: Statement -> Run ()
 presentMenu s = do
+    liftIO $ putStrLn $ "Current statement: " ++ show s
     liftIO $ putStrLn "Input command (o for options): "
     input <- liftIO $ getLine
     let result = (readMaybe (capitalise input) :: Maybe Command)
