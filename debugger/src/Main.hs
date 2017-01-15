@@ -149,7 +149,7 @@ exec (Assign s v) = do
     set (s,val)
     setStat (Assign s v)
 
-exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1 -- no need to prompt user on Seq statements
+exec (Seq s0 s1) = do presentMenu s0 >> presentMenu s1 
 
 exec (Print e) = do 
     st <- get
@@ -206,8 +206,8 @@ data Command = N -- execute next instruction
              | O -- options
              | Vars -- display all variables that currently hold values
              | Past -- display all previously executed statements
-             | Inspect String
-             | History String
+             | Inspect String -- view the current state of the given  variable
+             | History String -- view the history of the given variable from the beginning of execution
     deriving (Show, Read, Eq)
 
 -- this could probably be a lot nicer
@@ -252,7 +252,10 @@ capitalise :: String -> String
 capitalise (x:xs) = (toUpper x):xs
 capitalise [] = []
 
-presentMenu :: Statement -> Run ()
+presentMenu :: Statement -> Run () 
+
+presentMenu (Seq a b) = exec $ Seq a b -- no need to present choice for Seq actions,  it just annoys the user
+
 presentMenu s = do
     liftIO $ putStrLn $ "Current statement: " ++ show s
     liftIO $ putStrLn "Input command (o for options): "
